@@ -164,4 +164,4 @@ user_prompt = st.chat_input("Ask about your food or nutrition...")
 # Process the new message 
 if user_prompt: 
    process_chat_message(user_prompt, uploaded_file)
-      st.experimental_rerun() 
+   st.experimental_rerun() 
