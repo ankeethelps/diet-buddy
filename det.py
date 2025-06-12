@@ -5,16 +5,17 @@ from groq import Groq
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 
+# Initialize Groq client
 groq_client = Groq(api_key="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")
 
-#chatbot model
+# Chatbot model
 llm = ChatGroq(
     temperature=0,
     groq_api_key=groq_client.api_key,
     model_name="meta-llama/llama-4-scout-17b-16e-instruct"
 )
 
-# system prompt
+# System prompt for the AI dietitian
 SYSTEM_PROMPT = """
 You are a Great dietitian who has a great knowledge of food and its nutrients. Answer the user's question clearly.
 If an image is provided, first describe what it is, for example, "INDIAN THALI".
@@ -59,43 +60,48 @@ def parse_nutrition(text):
 
     return calories, protein, sugar
 
-def process_chat_message(user_prompt, uploaded_file):
-    if not user_prompt and not uploaded_file:
+def process_chat_message(user_prompt, image_for_this_message):
+    """
+    Processes user input (text and optional image), queries the Groq API via LangChain,
+    parses the nutrition information from the AI's response, and accumulates
+    the totals in Streamlit's session state.
+    """
+    if not user_prompt and not image_for_this_message:
         st.error("Please enter a prompt or upload an image.")
         return
 
-    # text
+    # Prepare content for the HumanMessage (multimodal support)
     user_content_parts = [{"type": "text", "text": user_prompt}]
     
-    # Store user's message in chat history immediately
-    # resiplay the image
-    st.session_state.messages.append({"role": "user", "content": user_prompt, "image": uploaded_file})
+    # Store user's message in chat history immediately, including the actual file object for re-display
+    st.session_state.messages.append({"role": "user", "content": user_prompt, "image": image_for_this_message})
 
-    if uploaded_file:
-        img_bytes = uploaded_file.read()
+    if image_for_this_message:
+        # Read image bytes and encode to base64
+        img_bytes = image_for_this_message.read()
         img_b64 = base64.b64encode(img_bytes).decode()
         user_content_parts.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}})
 
-    # llm chain
+    # Construct messages for LangChain's LLM
     messages_for_llm = [
         SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(content=user_content_parts)
     ]
     try:
         with st.spinner("Analyzing..."):
-            # invoke model
+            # Invoke the LangChain ChatGroq model
             llm_response = llm.invoke(messages_for_llm)
             llm_response_text = llm_response.content
 
         # Parse nutrition from the AI's response text
         calories, protein, sugar = parse_nutrition(llm_response_text)
 
-        # Update the accumulated totals 
+        # Update the accumulated totals in Streamlit's session state
         st.session_state["total_calories"] += calories
         st.session_state["total_protein"] += protein
         st.session_state["total_sugar"] += sugar
 
-        # Format the response
+        # Format the AI's full response for display in the chat, including accumulated totals
         formatted_ai_response = (
             f"{llm_response_text}\n\n"
             f"--- Accumulated Nutrition ---\n"
@@ -118,6 +124,11 @@ def reset_chat_and_nutrition():
     st.session_state["total_protein"] = 0.0
     st.session_state["total_sugar"] = 0.0
     st.session_state["messages"] = [] # Clear the chat messages
+    
+    # Crucial for clearing file uploader display
+    st.session_state["file_uploader_key"] += 1 
+    st.session_state["current_uploaded_file"] = None # Also clear the stored file object
+
     st.success("Chat and accumulated nutrition data have been reset!")
 
 
@@ -125,7 +136,7 @@ def reset_chat_and_nutrition():
 st.set_page_config(page_title="Groq Vision Dietitian Chat", layout="centered")
 
 st.title("YOUR DIETECIAN Chat")
-st.markdown("Upload a food image . Your personalized dietitian will respond!")
+st.markdown("Upload a food image. Your personalized dietitian will respond!")
 
 # Initialize session state variables if they don't exist
 if "messages" not in st.session_state:
@@ -136,6 +147,13 @@ if "total_protein" not in st.session_state:
     st.session_state["total_protein"] = 0.0
 if "total_sugar" not in st.session_state:
     st.session_state["total_sugar"] = 0.0
+# Key for the file uploader to manage its state and force reset
+if "file_uploader_key" not in st.session_state:
+    st.session_state["file_uploader_key"] = 0
+# Variable to hold the actual uploaded file object that's ready for processing
+if "current_uploaded_file" not in st.session_state:
+    st.session_state["current_uploaded_file"] = None
+
 
 # Display chat messages
 for message in st.session_state.messages:
@@ -147,7 +165,21 @@ for message in st.session_state.messages:
 
 # Input for new messages and image upload (placed in sidebar)
 with st.sidebar:
-    uploaded_file = st.file_uploader("Upload Food Image (Optional)", type=["jpg", "jpeg", "png"])
+    # File uploader, using the dynamic key
+    uploaded_file_from_sidebar = st.file_uploader(
+        "Upload Food Image (Optional)",
+        type=["jpg", "jpeg", "png"],
+        key=st.session_state["file_uploader_key"]
+    )
+    
+    # If a new file is uploaded through the sidebar, store it in session_state.current_uploaded_file.
+    # This also handles the case where a user removes an uploaded file from the uploader,
+    # as `uploaded_file_from_sidebar` would become None.
+    if uploaded_file_from_sidebar is not None and uploaded_file_from_sidebar != st.session_state["current_uploaded_file"]:
+        st.session_state["current_uploaded_file"] = uploaded_file_from_sidebar
+        st.write("Image uploaded! Now type your question in the chat below to analyze it.")
+        st.experimental_rerun() # Rerun to update sidebar display and prompt user for text
+
     st.markdown("---")
     st.subheader("Current Accumulated Nutrition")
     st.write(f"**Calories:** {st.session_state['total_calories']} kcal")
@@ -161,11 +193,20 @@ with st.sidebar:
 # Chat input at the bottom of the main page
 user_prompt = st.chat_input("Ask about your food or nutrition...")
 
-# Process the new message 
-if uploaded_file:
-    st.session_state["last_uploaded_file"] = uploaded_file
+# This is the crucial part:
+# Process the new message if the user has typed something in the chat input
+if user_prompt:
+    # Get the image that's currently 'staged' for the next message from session state.
+    image_to_process = st.session_state["current_uploaded_file"]
 
-# Process the new message only if the user types something
-if user_prompt: 
-    process_chat_message(user_prompt, uploaded_file)
-    st.experimental_rerun() 
+    # Call the processing function with the text prompt and the staged image (if any)
+    process_chat_message(user_prompt, image_to_process)
+
+    # After processing this message, clear the staged image from session_state
+    # This prevents the image from being re-used for subsequent text-only prompts.
+    st.session_state["current_uploaded_file"] = None
+    
+    # Increment the file uploader key to visually clear the uploaded file in the sidebar.
+    st.session_state["file_uploader_key"] += 1 
+    
+    st.experimental_rerun() # Force a rerun to update chat history and clear uploader.
