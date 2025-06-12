@@ -162,6 +162,10 @@ with st.sidebar:
 user_prompt = st.chat_input("Ask about your food or nutrition...")
 
 # Process the new message 
-if user_prompt: 
-   process_chat_message(user_prompt, uploaded_file)
-   st.experimental_rerun() 
+if uploaded_file:
+    st.session_state["last_uploaded_file"] = uploaded_file
+
+# Process the new message only if the user types something
+if user_prompt:
+    current_uploaded_file = st.session_state.get("last_uploaded_file", None)
+    process_chat_message(user_prompt, current_uploaded_file)
