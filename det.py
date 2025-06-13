@@ -209,4 +209,4 @@ if user_prompt:
     # Increment the file uploader key to visually clear the uploaded file in the sidebar.
     st.session_state["file_uploader_key"] += 1 
     
-    st.experimental_rerun() # Force a rerun to update chat history and clear uploader.
+  #  st.experimental_rerun() # Force a rerun to update chat history and clear uploader.
